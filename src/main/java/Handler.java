@@ -1,13 +1,12 @@
-import java.awt.*;
+import org.apache.log4j.Logger;
+
 import java.io.*;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.Scanner;
+import java.util.*;
 
 public class Handler extends Thread {
     private static final Map<String, String> CONTENT_TYPES = new HashMap<>() {{
@@ -19,13 +18,16 @@ public class Handler extends Thread {
     }};
     private static final String NOT_FOUND_MESSAGE = "NOT FOUND";
     private static final String ALLOW_METHODS = "GET, POST, OPTIONS";
+    private static final Logger log = Logger.getLogger(Handler.class);
+    private List<String> headers;
 
     private Socket socket;
     private String directory;
 
-    Handler(Socket socket, String directory) {
+    Handler(Socket socket, String directory, List<String> headers) {
         this.socket = socket;
         this.directory = directory;
+        this.headers = headers;
     }
 
     @Override
@@ -46,10 +48,12 @@ public class Handler extends Thread {
                 byte[] fileBytes = Files.readAllBytes(filePath);
                 this.sendHeader(outputStream, method, 200, "OK", type, fileBytes.length);
                 outputStream.write(fileBytes);
+                log.info("GET Request OK");
             } else {
                 String type = CONTENT_TYPES.get("text");
                 this.sendHeader(outputStream, method, 404, "Not Found", type, NOT_FOUND_MESSAGE.length());
                 outputStream.write(NOT_FOUND_MESSAGE.getBytes());
+                log.info("GET Request Fail");
             }
 
         } catch (
@@ -65,6 +69,7 @@ public class Handler extends Thread {
         if (Files.exists(filePath)) {
             try {
                 Files.writeString(filePath, payload + ", ", StandardOpenOption.APPEND);
+                log.info("POST Request OK");
             } catch (IOException x) {
                 System.err.format("IOException: %s%n", x);
             }
@@ -72,6 +77,7 @@ public class Handler extends Thread {
             String type = CONTENT_TYPES.get("text");
             this.sendHeader(outputStream, "POST", 500, "Not Found", type, NOT_FOUND_MESSAGE.length());
             outputStream.write(NOT_FOUND_MESSAGE.getBytes());
+            log.info("POST Request Fail");
         }
     }
 
@@ -81,9 +87,12 @@ public class Handler extends Thread {
             while (br.readLine().length() != 0) {
             }
         } catch (NullPointerException ignored) {
-
         }
-        return line.split(" ");
+        try {
+            return line.split(" ");
+        }catch (NullPointerException e){
+            return null;
+        }
     }
 
     private String getPayload(BufferedReader br) throws IOException {
@@ -91,14 +100,23 @@ public class Handler extends Thread {
         while (br.ready()) {
             payload.append((char) br.read());
         }
+        if (payload.isEmpty()){
+            return null;
+        }else{
         System.out.println("Payload data is: " + payload.toString().split("=")[1]);
         return payload.toString().split("=")[1];
+        }
     }
 
 
     private void sendHeader(OutputStream outputStream, String method, int statusCode, String statusText, String type, long length) {
         PrintStream printStream = new PrintStream(outputStream);
         printStream.printf("HTTP/1.1 %s %s%n", statusCode, statusText);
+        if (!headers.isEmpty()){
+            for (String head : headers){
+                printStream.printf(head+"%n");
+            }
+        }
         printStream.printf("Access-Control-Allow-Origin: %s%n", "http://localhost:8080");
         if (method.equals("OPTIONS")) printStream.printf("Allow: %s%n", ALLOW_METHODS);
         printStream.printf("Access-Control-Method: %s%n", method);
@@ -112,4 +130,11 @@ public class Handler extends Thread {
         return extensionStart == -1 ? "" : name.substring(extensionStart + 1);
     }
 
+    public synchronized String getDirectory() {
+        return directory;
+    }
+
+    public synchronized void setDirectory(String directory) {
+        this.directory = directory;
+    }
 }
